@@ -7,13 +7,12 @@ enters the cabin at a vent zone just inside that door. It keeps running until
 the door closes. The same hour is simulated with and without the PCM so the
 two can be compared.
 
-Edit the PARAMETERS section, then run:  python3 bus_door_heatmap_pcm.py
-Needs: numpy, matplotlib.  Output: printed comparison + bus_door_heatmap_pcm.png
+Streamlit app: set the inputs in the sidebar.  Run locally:  streamlit run bus_door_heatmap_pcm.py
+Needs: streamlit, numpy, matplotlib.
 
 All numbers are illustrative placeholders. Replace them with your own data.
 """
 import io
-import contextlib
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -21,50 +20,62 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 # =============================== PARAMETERS ===============================
-# --- door pattern ---
-DOOR_OPEN_TIME_S = 20
-FRONT_OPENINGS_PER_HR = 24
-REAR_OPENINGS_PER_HR = 14
+# Each value is set by a sidebar control. The number after the label is the default.
+# Run locally with:  streamlit run bus_door_heatmap_pcm.py
+st.set_page_config(page_title="Bus door heat loss with PCM", layout="wide")
+form = st.sidebar.form("params")
+form.header("Inputs")
 
-# --- weather and comfort ---
-T_OUT = -5.0
-T_SET = 21.0
+with form.expander("Door pattern", expanded=True):
+    DOOR_OPEN_TIME_S = st.slider("Door open time (s)", 5, 60, 20)
+    FRONT_OPENINGS_PER_HR = st.slider("Front door openings per hour", 0, 60, 24)
+    REAR_OPENINGS_PER_HR = st.slider("Rear door openings per hour", 0, 60, 14)
 
-# --- bus and heating system ---
-HEATER_MAX_KW = 20.0
-UA_KW_PER_K = 0.25
-C_AIR_KJ_PER_K = 80.0
-C_MASS_KJ_PER_K = 800.0
-HA_KW_PER_K = 4.0
-HEATER_GAIN_KW_PER_K = 10.0
+with form.expander("Weather and comfort", expanded=True):
+    T_OUT = st.slider("Outside temperature (°C)", -35.0, 10.0, -5.0, 0.5)
+    T_SET = st.slider("Cabin setpoint (°C)", 15.0, 25.0, 21.0, 0.5)
 
-# --- PCM under the cabin ---
-PCM_MATERIAL = "erythritol"      # "erythritol", "erythritol-urea eutectic", "sodium acetate trihydrate"
-PCM_CAPACITY_KWH = 6.0           # usable latent heat when fully charged at the depot
-PCM_PREHEAT_S = 10               # fan starts this many seconds before a door opens
-PCM_AIRFLOW_M3S = 0.5            # air through the PCM (split if both doors are active)
-PCM_MAX_KW = 15.0                # max heat the PCM heat exchanger can deliver
-PCM_APPROACH_K = 10.0            # supply air stays this far below the PCM melting point
-PCM_MAX_SUPPLY_C = 60.0          # supply air cap (mixed down for safety/comfort)
-PCM_VENT_DEPTH_M = 0.75          # vent zone depth inside the door-side wall
-PCM_FAN_KW = 0.3                 # electrical power of the fan
-PCM_LOSS_KW_PER_K = 0.003        # insulation loss while the PCM is hot
-PCM_SYSTEM_MASS_FACTOR = 1.4     # container + insulation + heat exchanger vs PCM mass
-PCM_RECHARGE_EFF = 0.98          # depot heater efficiency
+with form.expander("PCM under the cabin", expanded=True):
+    PCM_MATERIAL = st.selectbox("PCM material", ["erythritol", "erythritol-urea eutectic", "sodium acetate trihydrate"])
+    PCM_CAPACITY_KWH = st.slider("Usable PCM capacity (kWh)", 0.5, 20.0, 6.0, 0.5)
+    PCM_PREHEAT_S = st.slider("Fan starts before door opens (s)", 0, 30, 10)
+    PCM_AIRFLOW_M3S = st.slider("Airflow through PCM (m³/s)", 0.1, 1.5, 0.5, 0.05)
+    PCM_MAX_KW = st.slider("Max PCM heat output (kW)", 2.0, 40.0, 15.0, 1.0)
+    PCM_APPROACH_K = st.slider("Supply air below melting point (K)", 2.0, 30.0, 10.0, 1.0)
+    PCM_MAX_SUPPLY_C = st.slider("Supply air cap (°C)", 30.0, 90.0, 60.0, 1.0)
+    PCM_VENT_DEPTH_M = st.slider("Vent zone depth (m)", 0.25, 1.5, 0.75, 0.25)
+    PCM_FAN_KW = st.slider("Fan power (kW)", 0.05, 1.0, 0.3, 0.05)
+    PCM_LOSS_KW_PER_K = st.slider("PCM insulation loss (kW/K)", 0.0, 0.02, 0.003, 0.001, format="%.3f")
+    PCM_SYSTEM_MASS_FACTOR = st.slider("System mass / PCM mass", 1.0, 2.5, 1.4, 0.05)
+    PCM_RECHARGE_EFF = st.slider("Depot recharge efficiency", 0.5, 1.0, 0.98, 0.01)
 
-# --- geometry ---
-LENGTH_M, WIDTH_M = 12.0, 2.5
-DOOR_WIDTH_M = 1.25
-DOOR_CENTERS_M = (1.875, 9.125)
-DOOR_DRAFT_MS = 0.5
-MIXING_M2_PER_S = 0.04
+with form.expander("Bus and heating system"):
+    HEATER_MAX_KW = st.slider("Max heater power (kW)", 5.0, 50.0, 20.0, 1.0)
+    UA_KW_PER_K = st.slider("Envelope UA (kW/K)", 0.05, 1.0, 0.25, 0.05)
+    C_AIR_KJ_PER_K = st.slider("Cabin air heat capacity (kJ/K)", 40.0, 150.0, 80.0, 5.0)
+    C_MASS_KJ_PER_K = st.slider("Interior mass heat capacity (kJ/K)", 200.0, 2000.0, 800.0, 50.0)
+    HA_KW_PER_K = st.slider("Air-to-mass transfer (kW/K)", 1.0, 10.0, 4.0, 0.5)
+    HEATER_GAIN_KW_PER_K = st.slider("Heater control gain (kW/K)", 2.0, 30.0, 10.0, 1.0)
 
-# --- simulation and figure ---
-SIM_HOURS = 1.0
+with form.expander("Geometry and airflow"):
+    LENGTH_M = st.slider("Cabin length (m)", 8.0, 18.0, 12.0, 0.25)
+    WIDTH_M = st.slider("Cabin width (m)", 2.0, 3.0, 2.5, 0.25)
+    DOOR_WIDTH_M = st.slider("Door width (m)", 0.75, 2.0, 1.25, 0.25)
+    front_x = st.slider("Front door centre from front (m)", 0.75, 5.0, 1.875, 0.125)
+    rear_x = st.slider("Rear door centre from rear (m)", 0.75, 5.0, 2.875, 0.125)
+    DOOR_DRAFT_MS = st.slider("Door draft speed (m/s)", 0.1, 2.0, 0.5, 0.1)
+    MIXING_M2_PER_S = st.slider("Air mixing (m²/s)", 0.01, 0.15, 0.04, 0.01)
+DOOR_CENTERS_M = (front_x, LENGTH_M - rear_x)
+
+with form.expander("Simulation and figure"):
+    SIM_HOURS = st.slider("Simulated time (h)", 0.25, 2.0, 1.0, 0.25, help="Longer runs take longer to compute.")
+    SNAPSHOT_OPENING = st.number_input("Front door opening to show", 1, 120, 3)
+    SNAPSHOT_OFFSETS_S = (st.slider("Snapshot 1 (s from opening)", -30, 120, -5),
+                          st.slider("Snapshot 2 (s from opening)", -30, 120, 15),
+                          st.slider("Snapshot 3 (s from opening)", -30, 120, 35))
+
+form.form_submit_button("Run simulation", type="primary", width="stretch")
 DT = 0.1
-SNAPSHOT_OPENING = 3                 # which front-door opening to photograph
-SNAPSHOT_OFFSETS_S = (-5, 15, 35)    # seconds relative to that opening's start
-SHOW_WINDOW = False
 # ==========================================================================
 
 PCM_LIBRARY = {  # latent heat only; approximate values, replace with sourced data
@@ -196,31 +207,33 @@ def run(use_pcm, snap_steps):
 
 
 def main():
+    lines = []
+    out = lambda text="": lines.append(text)
     if int(COUNTS[0]) >= SNAPSHOT_OPENING:
         t0 = opening_start(0, SNAPSHOT_OPENING)
     else:
         t0 = 600.0
-    snap_steps = [int((t0 + o) / DT) for o in SNAPSHOT_OFFSETS_S]
+    snap_steps = [min(max(int((t0 + o) / DT), 0), int(TEND / DT) - 1) for o in SNAPSHOT_OFFSETS_S]
     A = run(False, snap_steps)
     B = run(True, snap_steps)
 
     heater_saved = A["heater"] - B["heater"]
     net_saved = heater_saved - B["fan"]
     weight = PCM_MASS * PCM_SYSTEM_MASS_FACTOR
-    print(f"\n=== {PCM_MATERIAL}, {PCM_CAPACITY_KWH:g} kWh PCM, {PCM_PREHEAT_S}s pre-blow ===")
-    print(f"Door {DOOR_OPEN_TIME_S}s | front {FRONT_OPENINGS_PER_HR}/h, rear {REAR_OPENINGS_PER_HR}/h | outside {T_OUT} C\n")
-    print(f"{'':<26}{'no PCM':>10}{'with PCM':>10}")
+    out(f"\n=== {PCM_MATERIAL}, {PCM_CAPACITY_KWH:g} kWh PCM, {PCM_PREHEAT_S}s pre-blow ===")
+    out(f"Door {DOOR_OPEN_TIME_S}s | front {FRONT_OPENINGS_PER_HR}/h, rear {REAR_OPENINGS_PER_HR}/h | outside {T_OUT} C\n")
+    out(f"{'':<26}{'no PCM':>10}{'with PCM':>10}")
     rows = [("Heater energy (kWh)", A["heater"], B["heater"]), ("PCM heat delivered (kWh)", 0, B["pcm"]),
             ("Door heat loss (kWh)", A["door"], B["door"]), ("Envelope loss (kWh)", A["env"], B["env"]),
             ("Lowest mean air (C)", A["tmean"].min(), B["tmean"].min()), ("Average mean air (C)", A["tmean"].mean(), B["tmean"].mean())]
     for name, a, b in rows:
-        print(f"{name:<26}{a:>10.2f}{b:>10.2f}")
-    print(f"\nHeater energy saved:      {heater_saved:.2f} kWh (fan uses {B['fan']:.2f} kWh) -> net {net_saved:.2f} kWh")
-    print(f"PCM heat lost in storage: {B['pcm_loss']:.2f} kWh | PCM left at end: {100 * B['E_end'] / PCM_CAPACITY_KWH:.0f}%")
-    print(f"Depot recharge needed:    {B['recharge']:.2f} kWh")
-    print(f"PCM mass {PCM_MASS:.0f} kg, about {weight:.0f} kg with container, insulation and heat exchanger")
+        out(f"{name:<26}{a:>10.2f}{b:>10.2f}")
+    out(f"\nHeater energy saved:      {heater_saved:.2f} kWh (fan uses {B['fan']:.2f} kWh) -> net {net_saved:.2f} kWh")
+    out(f"PCM heat lost in storage: {B['pcm_loss']:.2f} kWh | PCM left at end: {100 * B['E_end'] / PCM_CAPACITY_KWH:.0f}%")
+    out(f"Depot recharge needed:    {B['recharge']:.2f} kWh")
+    out(f"PCM mass {PCM_MASS:.0f} kg, about {weight:.0f} kg with container, insulation and heat exchanger")
     if B["pcm"] > 0:
-        print(f"Net battery energy saved per 100 kg carried: {100 * net_saved / weight:.2f} kWh")
+        out(f"Net battery energy saved per 100 kg carried: {100 * net_saved / weight:.2f} kWh")
 
     lo, hi = max(T_OUT, T_SET - 15), T_SET + 1
     fig = plt.figure(figsize=(12, 2.4 * len(snap_steps) + 3))
@@ -244,16 +257,24 @@ def main():
     ax.set_xlabel("time (min)")
     ax.set_ylabel("degC")
     ax.legend(loc="lower right", fontsize=8)
-    fig.savefig("bus_door_heatmap_pcm.png", dpi=130, bbox_inches="tight")
-    print("\nSaved figure: bus_door_heatmap_pcm.png")
-    return fig
+    return fig, "\n".join(lines)
+
+
+@st.cache_data(show_spinner=False)
+def simulate(inputs):
+    """inputs is only the cache key: the model reads the values set by the sidebar above."""
+    fig, summary = main()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return summary, buf.getvalue()
 
 
 if __name__ == "__main__":
     st.title("Bus door heat loss with PCM heater")
-    buf = io.StringIO()
+    st.caption("Change the inputs in the sidebar, then press Run simulation. All defaults are illustrative placeholders.")
+    inputs = {k: v for k, v in globals().items() if k.isupper() and isinstance(v, (int, float, str, tuple))}
     with st.spinner("Running simulation..."):
-        with contextlib.redirect_stdout(buf):
-            fig = main()
-    st.code(buf.getvalue())
-    st.pyplot(fig)
+        summary, png = simulate(inputs)
+    st.code(summary)
+    st.image(png, width="stretch")
